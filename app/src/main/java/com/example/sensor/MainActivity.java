@@ -21,7 +21,6 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
     private TextView tvStatus, tvLog, tvPollingStatus;
     private TextView tvDistance, tvTemperature, tvHumidity, tvIlluminance, tvColorTemp, tvBattery;
     private Button btnConnect, btnDisconnect;
-    private Button btnStartPolling, btnStopPolling;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,8 +55,6 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
 
         btnConnect = findViewById(R.id.btnConnect);
         btnDisconnect = findViewById(R.id.btnDisconnect);
-        btnStartPolling = findViewById(R.id.btnStartPolling);
-        btnStopPolling = findViewById(R.id.btnStopPolling);
 
         updatePollingStatus(false);
     }
@@ -65,8 +62,6 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
     private void setupClickListeners() {
         btnConnect.setOnClickListener(v -> connectToServer());
         btnDisconnect.setOnClickListener(v -> disconnectFromServer());
-        btnStartPolling.setOnClickListener(v -> startPolling());
-        btnStopPolling.setOnClickListener(v -> stopPolling());
     }
 
     private void connectToServer() {
@@ -80,22 +75,6 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
         if (tcpClient != null) {
             tcpClient.stopPolling();
             tcpClient.disconnect();
-        }
-    }
-
-    private void startPolling() {
-        if (tcpClient.isConnected()) {
-            addLog("开始自动监测 (间隔2秒)");
-            tcpClient.startPolling();
-        } else {
-            showToast("请先连接服务器");
-        }
-    }
-
-    private void stopPolling() {
-        if (tcpClient.isPolling()) {
-            addLog("停止监测");
-            tcpClient.stopPolling();
         }
     }
 
@@ -130,7 +109,6 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
 
                 btnConnect.setEnabled(false);
                 btnDisconnect.setEnabled(true);
-                btnStartPolling.setEnabled(true);
             } else {
                 tvStatus.setText("状态: 未连接");
                 tvStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
@@ -138,8 +116,6 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
 
                 btnConnect.setEnabled(true);
                 btnDisconnect.setEnabled(false);
-                btnStartPolling.setEnabled(false);
-                btnStopPolling.setEnabled(false);
                 updatePollingStatus(false);
             }
         });
@@ -154,13 +130,9 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
         if (polling) {
             tvPollingStatus.setText("监测状态: 运行中");
             tvPollingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_dark));
-            btnStartPolling.setEnabled(false);
-            btnStopPolling.setEnabled(true);
         } else {
             tvPollingStatus.setText("监测状态: 已停止");
             tvPollingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-            btnStartPolling.setEnabled(true);
-            btnStopPolling.setEnabled(false);
         }
     }
 
@@ -169,6 +141,14 @@ public class MainActivity extends AppCompatActivity implements TCPClient.TCPCall
         mainHandler.post(() -> {
             addLog("错误: " + errorMessage);
             showToast(errorMessage);
+        });
+    }
+    
+    @Override
+    public void onConnectionTimeout() {
+        mainHandler.post(() -> {
+            addLog("连接超时: 未收到服务器确认消息");
+            showToast("请检查wifi是否连接ESP32");
         });
     }
 

@@ -8,6 +8,8 @@ import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import android.os.Handler;
+import android.os.Looper;
 
 public class TCPClient {
     private static final String TAG = "TCPClient";
@@ -24,6 +26,13 @@ public class TCPClient {
     // 轮询控制
     private AtomicBoolean isPolling = new AtomicBoolean(false);
     private static final int POLLING_INTERVAL = 2000; // 2秒间隔
+    
+    // 连接超时控制
+    private static final int CONNECTION_TIMEOUT = 5000; // 5秒超时
+    private static final int DELAY_BEFORE_POLLING = 3000; // 收到connected后3秒开始轮询
+    private boolean connectedReceived = false;
+    private boolean timeoutOccurred = false;
+    private Handler timeoutHandler;
 
     public interface TCPCallback {
         // 修改回调：一次性返回所有数据数组
@@ -32,11 +41,13 @@ public class TCPClient {
         void onConnectionStatusChanged(boolean connected);
         void onError(String errorMessage);
         void onPollingStatusChanged(boolean polling);
+        void onConnectionTimeout();
     }
 
     public TCPClient(TCPCallback callback) {
         this.callback = callback;
         this.executor = Executors.newFixedThreadPool(3);
+        this.timeoutHandler = new Handler(Looper.getMainLooper());
     }
 
     private void ensureExecutor() {
@@ -47,6 +58,9 @@ public class TCPClient {
 
     public void connect() {
         ensureExecutor();
+        connectedReceived = false;
+        timeoutOccurred = false;
+        
         executor.execute(() -> {
             try {
                 socket = new Socket(SERVER_IP, SERVER_PORT);
@@ -58,6 +72,9 @@ public class TCPClient {
                     callback.onConnectionStatusChanged(true);
                 }
 
+                // 启动连接超时定时器
+                startConnectionTimeoutTimer();
+                
                 startReceiving();
                 Log.d(TAG, "Connected to server successfully");
 
@@ -69,6 +86,36 @@ public class TCPClient {
                 disconnect();
             }
         });
+    }
+    
+    private void startConnectionTimeoutTimer() {
+        timeoutHandler.postDelayed(() -> {
+            if (!connectedReceived && isConnected) {
+                timeoutOccurred = true;
+                Log.e(TAG, "Connection timeout: did not receive 'connected' message within 5 seconds");
+                if (callback != null) {
+                    callback.onConnectionTimeout();
+                }
+                disconnect();
+            }
+        }, CONNECTION_TIMEOUT);
+    }
+    
+    private void handleConnectedMessage() {
+        if (!connectedReceived) {
+            connectedReceived = true;
+            Log.d(TAG, "Received 'connected' message from server");
+            
+            // 取消超时定时器
+            timeoutHandler.removeCallbacksAndMessages(null);
+            
+            // 3秒后开始轮询
+            timeoutHandler.postDelayed(() -> {
+                if (isConnected && !timeoutOccurred) {
+                    startPolling();
+                }
+            }, DELAY_BEFORE_POLLING);
+        }
     }
 
     // 开始轮询：每2秒请求一次所有数据
@@ -174,6 +221,14 @@ public class TCPClient {
     // 处理接收到的数据，解析格式：ABBA<v1>,<v2>,<v3>,<v4>,<v5>,<v6>CDDC
     private void processReceivedBuffer(StringBuilder buffer) {
         String data = buffer.toString();
+        
+        // 检查是否包含"connected"消息
+        if (data.contains("connected")) {
+            handleConnectedMessage();
+            // 移除"connected"消息，避免重复处理
+            buffer.delete(0, buffer.indexOf("connected") + "connected".length());
+            data = buffer.toString();
+        }
 
         int startIndex = data.indexOf("ABBA");
         while (startIndex != -1) {
@@ -220,6 +275,12 @@ public class TCPClient {
     public void disconnect() {
         stopPolling();
         isConnected = false;
+        
+        // 清理超时定时器
+        if (timeoutHandler != null) {
+            timeoutHandler.removeCallbacksAndMessages(null);
+        }
+        
         try {
             if (inputStream != null) inputStream.close();
             if (outputStream != null) outputStream.close();
